@@ -24,7 +24,7 @@ The HANDOFF §2 hard-constraint **"no new model inference, no API calls"** rules
 | Role | Original | Replacement |
 |---|---|---|
 | Primary benchmark | MT-Bench: m=6, n_j=4, n_i=80×2 turns=160 | **WildBench v2.0522**: m=41, n_j=2, n_i=1024 |
-| Secondary benchmark | Arena-Hard v0.1: m=8, n_j=2, n_i=500 | Arena-Hard v0.1 (unchanged) |
+| Secondary benchmark | Arena-Hard v0.1: m=8, n_j=2, n_i=500 | Arena-Hard v0.1 with expanded judge facet (see addendum below) |
 | Human anchor (primary) | `lmsys/mt_bench_human_judgments` Bradley–Terry | WildBench's length-penalized GPT-4 Elo leaderboard (see WildBench README) |
 | Human anchor (secondary) | Chatbot Arena Elo | Chatbot Arena Elo (unchanged) |
 
@@ -52,6 +52,27 @@ The HANDOFF §2 hard-constraint **"no new model inference, no API calls"** rules
 - **Prometheus-2 facet dropped.** No 2024+ frontier open-evaluator joins the analysis; the conclusions are conditional on the **gpt-4-turbo / gpt-4o / claude-3-opus / gpt-4-1106-preview** judge pool.
 - **GPT-4 single-vs-pairwise probe dropped.** The "scoring-format facet" was already a partial substitute for the rubric-prompt facet; both are out of scope now.
 - **Cross-benchmark item-style differentiation is weaker.** WildBench and Arena-Hard both source from Chatbot Arena conversations, whereas MT-Bench is hand-written. The H3 replication test is now between two "in-the-wild" benchmarks rather than "in-the-wild vs hand-curated." This narrows the population of items the conclusions generalize to.
+
+## Arena-Hard ingest addendum (2026-05-24)
+
+Implementation-time scouting of the `lmarena-ai/arena-hard-auto` HF dataset surfaced a much richer Arena-Hard v0.1 release than the pre-analysis plan assumed:
+
+| Judge | Models judged |
+|---|---|
+| `gpt-4-1106-preview` | 72 |
+| `claude-3-opus-20240229` | 31 |
+| `gemini-1.5-pro-api-0514` | 25 |
+| `llama-3-70b-instruct` | 20 |
+| `claude-3-5-sonnet-20240620` | 14 |
+
+The fully crossed 5-judge intersection contains **8 models** (`claude-2.1`, `claude-3-opus-20240229`, `claude-3-sonnet-20240229`, `gpt-3.5-turbo-0613`, `gpt-4-0613`, `gpt-4-turbo-2024-04-09`, `mistral-large-2402`, `mistral-medium`) — exactly matching the m=8 the plan named for Arena-Hard, but at **n_j=5 instead of n_j=2**. This makes σ²_j inferentially identifiable on Arena-Hard with bootstrap CIs, *upgrading* Arena-Hard's role in the project: it becomes the n_j-rich design that the original MT-Bench was supposed to provide. WildBench remains the m-rich and n_i-rich design.
+
+The analysis therefore fits each variance-component model twice on each benchmark:
+- **WildBench (m=41, n_j=2, n_i=1024)** — σ²_m and σ²_i well-identified, σ²_j point-only.
+- **Arena-Hard 5-judge (m=8, n_j=5, n_i=500)** — every component including σ²_j has a bootstrap CI.
+- **Arena-Hard 2-judge subset** matching {gpt-4-1106-preview, claude-3-opus} on m=31 — apples-to-apples comparison to WildBench's 2-judge design.
+
+Score scales differ between the two benchmarks (WildBench: 1–10 Likert; Arena-Hard: signed pairwise advantage in [−1, +1]). The G-study uses raw scores within each benchmark; cross-benchmark hypotheses (H3) compare *relative* variance-component ratios, not absolute magnitudes. A rank-transformed sensitivity check will be reported alongside the headline raw-scale numbers.
 
 ## Manuscript implications
 

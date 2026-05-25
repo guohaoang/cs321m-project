@@ -13,8 +13,7 @@ echo "==> [1/7] ingest WildBench"
 $PYTHON -m src.ingest.wildbench
 
 echo "==> [2/7] ingest Arena-Hard"
-echo "    (stub — not yet implemented)"
-# $PYTHON -m src.ingest.arena_hard
+$PYTHON -m src.ingest.arena_hard
 
 echo "==> [3/7] human anchors (WildBench Elo + Arena Elo)"
 echo "    (stub — not yet implemented)"
