@@ -23,8 +23,7 @@ echo "==> [4/7] G-study (variance components)"
 $PYTHON -m src.analysis.gstudy
 
 echo "==> [5/7] D-study + RFP sweep"
-echo "    (stub — not yet implemented)"
-# $PYTHON -m src.analysis.dstudy
+$PYTHON -m src.analysis.dstudy
 
 echo "==> [6/7] figures"
 echo "    (stub — not yet implemented)"

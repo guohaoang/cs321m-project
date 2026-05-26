@@ -173,7 +173,18 @@ def download_all() -> dict[tuple[str, str], Path]:
 
 
 def _per_cell_score(games: list[dict]) -> float:
-    """Average the two position-swapped games into one signed score in [-1, 1]."""
+    """Average the two position-swapped games into one signed score in [-1, 1].
+
+    Per arena-hard-auto's gen_judgment.py, the saved games list has:
+
+        games[0]: Assistant A = baseline,         Assistant B = candidate
+        games[1]: Assistant A = candidate,        Assistant B = baseline
+
+    So a label like ``A>>B`` means *baseline >> candidate* in game[0] (bad
+    for the candidate) and *candidate >> baseline* in game[1] (good for
+    the candidate). The candidate's signed advantage is therefore
+    ``-SCORE_MAP`` in game[0] and ``+SCORE_MAP`` in game[1].
+    """
     if not games:
         return float("nan")
     pieces: list[float] = []
@@ -182,10 +193,8 @@ def _per_cell_score(games: list[dict]) -> float:
         if raw not in SCORE_MAP:
             continue
         s = SCORE_MAP[raw]
-        # Game 0: model = Assistant A, score sign already correct.
-        # Game 1: model = Assistant B, so A>>B means baseline >> model → flip.
-        if i == 1:
-            s = -s
+        if i == 0:
+            s = -s  # game[0]: candidate is Assistant B
         pieces.append(s)
     if not pieces:
         return float("nan")

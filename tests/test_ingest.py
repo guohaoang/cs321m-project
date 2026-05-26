@@ -189,3 +189,26 @@ def test_ah_five_judge_intersection_fully_crossed(ah_df: pd.DataFrame) -> None:
 def test_ah_categories_populated(ah_df: pd.DataFrame) -> None:
     # After the inner-join orphan drop, every row should have a cluster.
     assert ah_df["category"].notna().all()
+
+
+def test_ah_sign_convention_sanity(ah_df: pd.DataFrame) -> None:
+    """Sign-convention regression test: gpt-4-turbo-2024-04-09 must beat
+    gpt-3.5-turbo-0613 against the gpt-4-0314 baseline (positive vs
+    negative average score). This catches the game-position swap bug in
+    games[0] vs games[1] handling."""
+    means = ah_df.groupby("model")["score"].mean()
+    if "gpt-4-turbo-2024-04-09" in means and "gpt-3.5-turbo-0613" in means:
+        gpt4t = means["gpt-4-turbo-2024-04-09"]
+        gpt35 = means["gpt-3.5-turbo-0613"]
+        assert gpt4t > 0, (
+            f"gpt-4-turbo should beat gpt-4-0314 baseline on average; "
+            f"got μ={gpt4t:.3f}. Likely a games[] position-swap bug."
+        )
+        assert gpt35 < 0, (
+            f"gpt-3.5-turbo-0613 should lose to gpt-4-0314 baseline on average; "
+            f"got μ={gpt35:.3f}. Likely a games[] position-swap bug."
+        )
+        assert gpt4t > gpt35, (
+            f"gpt-4-turbo ({gpt4t:.3f}) must rank above gpt-3.5-turbo "
+            f"({gpt35:.3f})."
+        )
