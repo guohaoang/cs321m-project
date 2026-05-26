@@ -20,8 +20,7 @@ echo "    (stub — not yet implemented)"
 # $PYTHON -m src.ingest.human_anchors
 
 echo "==> [4/7] G-study (variance components)"
-echo "    (stub — not yet implemented)"
-# $PYTHON -m src.analysis.gstudy
+$PYTHON -m src.analysis.gstudy
 
 echo "==> [5/7] D-study + RFP sweep"
 echo "    (stub — not yet implemented)"
