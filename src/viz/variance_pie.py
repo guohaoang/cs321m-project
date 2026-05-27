@@ -37,17 +37,28 @@ LABELS = {
     "ji":    r"$\sigma^2_{ji}$ (judge$\times$item)",
     "mji_e": r"$\sigma^2_{mji,e}$ (residual)",
 }
-# Highlight σ²_m (signal) and σ²_mj (the project's headline term) with
-# saturated colors; everything else is muted so the eye lands on those two.
+# Distinct hue per component so all seven are readable at a glance. Two
+# pieces of structure are preserved deliberately:
+#   - σ²_m (the signal) gets the saturated blue, which most readers
+#     associate with the "good" variance.
+#   - σ²_mj (the project's headline term) gets the only red, which
+#     reads as "attention".
+# The remaining five facets get distinct qualitative tab10 hues. Only the
+# residual stays gray, which is the convention in variance-decomposition
+# plots and lets a viewer immediately separate "structural" from "noise".
 COLORS = {
-    "m":     "#1f77b4",
-    "j":     "#d3d3d3",
-    "i":     "#bdbdbd",
-    "mj":    "#d62728",
-    "mi":    "#a6a6a6",
-    "ji":    "#909090",
-    "mji_e": "#7a7a7a",
+    "m":     "#1f77b4",  # blue        — signal (highlighted)
+    "j":     "#ff7f0e",  # orange      — judge main effect
+    "i":     "#2ca02c",  # green       — item main effect
+    "mj":    "#d62728",  # red         — model × judge (highlighted)
+    "mi":    "#9467bd",  # purple      — model × item
+    "ji":    "#17becf",  # teal        — judge × item
+    "mji_e": "#7f7f7f",  # gray        — residual (noise convention)
 }
+# Which color backgrounds are dark enough that white in-bar text reads
+# better than black? Determined by simple luminance on the palette above.
+LIGHT_TEXT_ON = {"m", "j", "mj", "mi"}  # blue, orange (saturated), red, purple
+DARK_TEXT_ON  = {"i", "ji", "mji_e"}     # green, teal, gray are lighter
 
 
 def _fit_benchmark(parquet: Path, judges: tuple[str, ...]):
@@ -88,7 +99,7 @@ def main() -> int:
             if v >= 0.04:
                 ax.text(left[i] + v / 2, i, f"{100*v:.0f}%",
                         ha="center", va="center", fontsize=8,
-                        color="white" if c in {"m", "mj"} else "black")
+                        color="white" if c in LIGHT_TEXT_ON else "black")
         left = [l + v for l, v in zip(left, vals)]
     ax.set_yticks(y_pos)
     ax.set_yticklabels(list(shares.keys()))
