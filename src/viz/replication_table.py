@@ -21,14 +21,14 @@ import pandas as pd
 from scipy.stats import spearmanr
 
 from src.analysis.gstudy import (
-    ARENA_HARD_JUDGES,
+    BENCHMARKS,
     COMPONENTS,
-    WILDBENCH_JUDGES,
     balanced_panel,
     bootstrap,
     fit,
     summarize_bootstrap,
 )
+from itertools import combinations
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PROCESSED_DIR = REPO_ROOT / "data" / "processed"
@@ -48,10 +48,7 @@ def _run_benchmark(parquet: Path, judges: tuple[str, ...], n_boot: int):
 
 def main() -> int:
     TABLES_DIR.mkdir(parents=True, exist_ok=True)
-    benches = {
-        "wildbench": (PROCESSED_DIR / "wildbench_long.parquet", WILDBENCH_JUDGES),
-        "arena_hard": (PROCESSED_DIR / "arena_hard_long.parquet", ARENA_HARD_JUDGES),
-    }
+    benches = BENCHMARKS
     n_boot = 1_000
 
     rows = []
@@ -82,43 +79,47 @@ def main() -> int:
     wide = wide.reindex(list(COMPONENTS))
     wide.to_csv(TABLES_DIR / "replication_variance_components.csv")
 
-    # Spearman over all 7 components, and over the 4 pre-registered ones.
-    wb_vec = [shares["wildbench"][c] for c in COMPONENTS]
-    ah_vec = [shares["arena_hard"][c] for c in COMPONENTS]
-    rho_all, p_all = spearmanr(wb_vec, ah_vec)
-
-    wb_h3 = [shares["wildbench"][c] for c in H3_COMPONENTS]
-    ah_h3 = [shares["arena_hard"][c] for c in H3_COMPONENTS]
-    rho_h3, p_h3 = spearmanr(wb_h3, ah_h3)
-
-    spearman_df = pd.DataFrame([
-        {"scope": "all 7 components",
-         "spearman_rho": rho_all, "p_value": p_all,
-         "components": ",".join(COMPONENTS),
-         "wb_ranks_by_share": ",".join(
-            [c for c, _ in sorted(zip(COMPONENTS, wb_vec), key=lambda x: -x[1])]),
-         "ah_ranks_by_share": ",".join(
-            [c for c, _ in sorted(zip(COMPONENTS, ah_vec), key=lambda x: -x[1])])},
-        {"scope": "H3 pre-registered (m, j, i, mj)",
-         "spearman_rho": rho_h3, "p_value": p_h3,
-         "components": ",".join(H3_COMPONENTS),
-         "wb_ranks_by_share": ",".join(
-            [c for c, _ in sorted(zip(H3_COMPONENTS, wb_h3), key=lambda x: -x[1])]),
-         "ah_ranks_by_share": ",".join(
-            [c for c, _ in sorted(zip(H3_COMPONENTS, ah_h3), key=lambda x: -x[1])])},
-    ])
+    # Pairwise Spearman over every benchmark pair, both for the full
+    # 7-component decomposition and the H3 pre-registered subset (m, j, i, mj).
+    rows_sp = []
+    for a, b in combinations(shares.keys(), 2):
+        for scope_name, comps in [
+            ("all 7 components", COMPONENTS),
+            ("H3 pre-registered (m, j, i, mj)", H3_COMPONENTS),
+        ]:
+            va = [shares[a][c] for c in comps]
+            vb = [shares[b][c] for c in comps]
+            rho, p = spearmanr(va, vb)
+            rows_sp.append({
+                "benchmark_A": a,
+                "benchmark_B": b,
+                "scope": scope_name,
+                "spearman_rho": rho,
+                "p_value": p,
+                "A_ranks_by_share": ",".join(
+                    [c for c, _ in sorted(zip(comps, va), key=lambda x: -x[1])]),
+                "B_ranks_by_share": ",".join(
+                    [c for c, _ in sorted(zip(comps, vb), key=lambda x: -x[1])]),
+            })
+    spearman_df = pd.DataFrame(rows_sp)
     spearman_df.to_csv(TABLES_DIR / "replication_spearman.csv", index=False)
 
     print("[replication] variance components (share %):")
     print(wide.round(4))
     print()
-    print("[replication] Spearman ρ (share-based ordering):")
+    print("[replication] pairwise Spearman ρ (share-based ordering):")
     print(spearman_df.to_string(index=False))
     print()
-    verdict_all = "REPLICATES" if rho_all >= 0.7 else "DOES NOT REPLICATE"
-    verdict_h3 = "REPLICATES" if rho_h3 >= 0.7 else "DOES NOT REPLICATE"
-    print(f"[replication] H3 verdict (all 7): ρ={rho_all:.3f} -> {verdict_all}")
-    print(f"[replication] H3 verdict (m,j,i,mj): ρ={rho_h3:.3f} -> {verdict_h3}")
+    # H3 verdict per pair and overall (mean ρ on the pre-registered subset)
+    h3_only = spearman_df[spearman_df["scope"] == "H3 pre-registered (m, j, i, mj)"]
+    mean_rho = h3_only["spearman_rho"].mean()
+    overall_verdict = "REPLICATES" if mean_rho >= 0.7 else "DOES NOT REPLICATE"
+    print(f"[replication] H3 pairs:")
+    for r in h3_only.itertuples():
+        v = "REPLICATES" if r.spearman_rho >= 0.7 else "fails"
+        print(f"   {r.benchmark_A:>13} vs {r.benchmark_B:<13}  ρ={r.spearman_rho:+.3f}  {v}")
+    print(f"[replication] H3 mean ρ across {len(h3_only)} pairs = {mean_rho:.3f} "
+          f"-> {overall_verdict}")
     return 0
 
 

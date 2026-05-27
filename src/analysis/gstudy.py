@@ -305,6 +305,18 @@ ARENA_HARD_JUDGES = (
     "gpt-4-1106-preview",
     "llama-3-70b-instruct",
 )
+BIGGEN_BENCH_JUDGES = (
+    "gpt-4", "gpt-4-04-turbo", "claude",
+    "prometheus-8x7b", "prometheus-8x7b-bgb",
+)
+
+
+# Canonical benchmark registry used by gstudy + dstudy + viz CLIs.
+BENCHMARKS: dict[str, tuple[Path, tuple[str, ...]]] = {
+    "wildbench":    (PROCESSED_DIR / "wildbench_long.parquet",   WILDBENCH_JUDGES),
+    "arena_hard":   (PROCESSED_DIR / "arena_hard_long.parquet",  ARENA_HARD_JUDGES),
+    "biggen_bench": (PROCESSED_DIR / "biggen_bench_long.parquet", BIGGEN_BENCH_JUDGES),
+}
 
 
 def _run_one(
@@ -330,10 +342,7 @@ def main() -> int:
     TABLES_DIR.mkdir(parents=True, exist_ok=True)
     n_boot = 1_000
 
-    runs = [
-        ("wildbench",   PROCESSED_DIR / "wildbench_long.parquet", WILDBENCH_JUDGES),
-        ("arena_hard",  PROCESSED_DIR / "arena_hard_long.parquet", ARENA_HARD_JUDGES),
-    ]
+    runs = [(name, *cfg) for name, cfg in BENCHMARKS.items()]
     all_rows = []
     for name, parquet, judges in runs:
         point, boot, summary = _run_one(name, parquet, judges, n_boot=n_boot)

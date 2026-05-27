@@ -15,9 +15,8 @@ $PYTHON -m src.ingest.wildbench
 echo "==> [2/7] ingest Arena-Hard"
 $PYTHON -m src.ingest.arena_hard
 
-echo "==> [3/7] human anchors (WildBench Elo + Arena Elo)"
-echo "    (stub — not yet implemented)"
-# $PYTHON -m src.ingest.human_anchors
+echo "==> [3/7] ingest BiGGen-Bench (+ human anchor)"
+$PYTHON -m src.ingest.biggen_bench
 
 echo "==> [4/7] G-study (variance components)"
 $PYTHON -m src.analysis.gstudy
@@ -29,6 +28,7 @@ echo "==> [6/7] figures"
 $PYTHON -m src.viz.variance_pie
 $PYTHON -m src.viz.rfp_heatmap
 $PYTHON -m src.viz.replication_table
+$PYTHON -m src.viz.validity_scatter
 
 echo "==> [7/7] tests"
 $PYTHON -m pytest tests/ -q

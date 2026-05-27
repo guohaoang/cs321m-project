@@ -15,6 +15,8 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WB_PARQUET = REPO_ROOT / "data" / "processed" / "wildbench_long.parquet"
 AH_PARQUET = REPO_ROOT / "data" / "processed" / "arena_hard_long.parquet"
+BGB_PARQUET = REPO_ROOT / "data" / "processed" / "biggen_bench_long.parquet"
+BGB_HUMAN_PARQUET = REPO_ROOT / "data" / "processed" / "biggen_human_scores.parquet"
 
 # WildBench v2.0522 release facts, locked in 2026-05-24 from the GitHub tree.
 # (See PIVOT.md for why WildBench replaces MT-Bench as the primary benchmark.)
@@ -189,6 +191,64 @@ def test_ah_five_judge_intersection_fully_crossed(ah_df: pd.DataFrame) -> None:
 def test_ah_categories_populated(ah_df: pd.DataFrame) -> None:
     # After the inner-join orphan drop, every row should have a cluster.
     assert ah_df["category"].notna().all()
+
+
+# -----------------------------------------------------------------------------
+# BiGGen-Bench (added 2026-05-26)
+# -----------------------------------------------------------------------------
+
+BGB_EXPECTED_JUDGES = {"gpt-4", "gpt-4-04-turbo", "claude",
+                       "prometheus-8x7b", "prometheus-8x7b-bgb"}
+BGB_EXPECTED_MODELS = {"Llama-2-13b-hf", "Mistral-7B-Instruct-v0.2",
+                       "Mixtral-8x7B-Instruct-v0.1", "gpt-3.5-turbo-0125"}
+BGB_EXPECTED_ROWS = 4 * 5 * 690  # 13,800
+BGB_EXPECTED_CATEGORIES = {"grounding", "instruction_following", "planning",
+                           "reasoning", "refinement", "safety",
+                           "theory_of_mind", "tool_usage"}
+
+
+@pytest.fixture(scope="module")
+def bgb_df() -> pd.DataFrame:
+    if not BGB_PARQUET.exists():
+        pytest.skip("biggen_bench_long.parquet missing; run the ingest first.")
+    return pd.read_parquet(BGB_PARQUET)
+
+
+def test_bgb_schema(bgb_df: pd.DataFrame) -> None:
+    expected = ["benchmark", "model", "judge", "item_id", "category", "score"]
+    assert list(bgb_df.columns) == expected
+    assert (bgb_df["benchmark"] == "biggen_bench").all()
+
+
+def test_bgb_full_crossing(bgb_df: pd.DataFrame) -> None:
+    """5 judges × 4 models × 690 items, every cell present."""
+    assert len(bgb_df) == BGB_EXPECTED_ROWS
+    assert set(bgb_df["judge"].unique()) == BGB_EXPECTED_JUDGES
+    assert set(bgb_df["model"].unique()) == BGB_EXPECTED_MODELS
+    assert bgb_df["item_id"].nunique() == 690
+    counts = bgb_df.groupby(["judge", "model"]).size()
+    assert (counts == 690).all(), f"some cells incomplete: min={counts.min()}"
+
+
+def test_bgb_score_range(bgb_df: pd.DataFrame) -> None:
+    valid = bgb_df["score"].dropna()
+    # Prometheus mean over 5 reps can produce non-integer values in [1, 5];
+    # single-rater judges produce integers in [1, 5].
+    assert valid.between(1.0, 5.0).all(), "BiGGen scores must be in [1, 5]"
+    assert bgb_df["score"].isna().sum() == 0
+
+
+def test_bgb_categories(bgb_df: pd.DataFrame) -> None:
+    assert set(bgb_df["category"].unique()) == BGB_EXPECTED_CATEGORIES
+
+
+def test_bgb_human_anchor_present() -> None:
+    if not BGB_HUMAN_PARQUET.exists():
+        pytest.skip("biggen_human_scores.parquet missing")
+    h = pd.read_parquet(BGB_HUMAN_PARQUET)
+    assert {"benchmark", "model", "item_id", "category", "human_score"} <= set(h.columns)
+    assert h["human_score"].between(1, 5).all()
+    assert len(h) > 1000, "expected at least 1k rated human cells"
 
 
 def test_ah_sign_convention_sanity(ah_df: pd.DataFrame) -> None:

@@ -70,12 +70,21 @@ def _plot_one(ax, rfp_csv: Path, benchmark: str, fixed_n_j: int = 1) -> None:
 
 def main() -> int:
     FIGURES_DIR.mkdir(parents=True, exist_ok=True)
+    # WildBench (40 pairs) dominates vertical space; allocate width
+    # proportional to the number of adjacent pairs to keep cells readable.
+    panels = [
+        ("WildBench", TABLES_DIR / "rfp_wildbench.csv", 40),
+        ("BiGGen-Bench", TABLES_DIR / "rfp_biggen_bench.csv", 3),  # m=4 → 3 pairs
+        ("Arena-Hard", TABLES_DIR / "rfp_arena_hard.csv", 7),
+    ]
+    widths = [max(1, n // 5) for _, _, n in panels]
     fig, axes = plt.subplots(
-        1, 2, figsize=(12, 9),
-        gridspec_kw={"width_ratios": [3, 1]},
+        1, len(panels), figsize=(14, 9),
+        gridspec_kw={"width_ratios": widths},
     )
-    im = _plot_one(axes[0], TABLES_DIR / "rfp_wildbench.csv", "WildBench")
-    _plot_one(axes[1], TABLES_DIR / "rfp_arena_hard.csv", "Arena-Hard")
+    im = None
+    for ax, (name, path, _) in zip(axes, panels):
+        im = _plot_one(ax, path, name)
 
     cbar = fig.colorbar(im, ax=axes, shrink=0.7, pad=0.02)
     cbar.set_label("Rank-flip probability (%)")

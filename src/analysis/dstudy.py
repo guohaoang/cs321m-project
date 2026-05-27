@@ -38,6 +38,8 @@ from scipy.stats import norm
 
 from src.analysis.gstudy import (
     ARENA_HARD_JUDGES,
+    BENCHMARKS,
+    BIGGEN_BENCH_JUDGES,
     WILDBENCH_JUDGES,
     balanced_panel,
     fit,
@@ -303,14 +305,7 @@ def _run(b: BenchmarkRun) -> None:
 
 def main() -> int:
     TABLES_DIR.mkdir(parents=True, exist_ok=True)
-    runs = [
-        BenchmarkRun("wildbench",
-                     PROCESSED_DIR / "wildbench_long.parquet",
-                     WILDBENCH_JUDGES),
-        BenchmarkRun("arena_hard",
-                     PROCESSED_DIR / "arena_hard_long.parquet",
-                     ARENA_HARD_JUDGES),
-    ]
+    runs = [BenchmarkRun(name, p, j) for name, (p, j) in BENCHMARKS.items()]
     for b in runs:
         _run(b)
     print(f"[dstudy] wrote tables to {TABLES_DIR}")

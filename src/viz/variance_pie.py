@@ -17,9 +17,8 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from src.analysis.gstudy import (
-    ARENA_HARD_JUDGES,
+    BENCHMARKS,
     COMPONENTS,
-    WILDBENCH_JUDGES,
     balanced_panel,
     fit,
 )
@@ -51,25 +50,32 @@ COLORS = {
 }
 
 
-def _fit_benchmark(parquet: Path, judges: tuple[str, ...]) -> dict[str, float]:
+def _fit_benchmark(parquet: Path, judges: tuple[str, ...]):
     df = pd.read_parquet(parquet)
     panel = balanced_panel(df, judges=judges)
     g = fit(panel)
-    return g.share()
+    return g.share(), g
+
+
+# Display labels for the three benchmark bars; the label includes the
+# balanced (m, n_j, n_i) so the figure is self-documenting.
+PRETTY = {
+    "wildbench":    "WildBench",
+    "arena_hard":   "Arena-Hard",
+    "biggen_bench": "BiGGen-Bench",
+}
 
 
 def main() -> int:
     FIGURES_DIR.mkdir(parents=True, exist_ok=True)
-    shares = {
-        "WildBench\n(m=41, $n_j$=2, $n_i$=986)": _fit_benchmark(
-            PROCESSED_DIR / "wildbench_long.parquet", WILDBENCH_JUDGES
-        ),
-        "Arena-Hard\n(m=8, $n_j$=5, $n_i$=462)": _fit_benchmark(
-            PROCESSED_DIR / "arena_hard_long.parquet", ARENA_HARD_JUDGES
-        ),
-    }
+    shares: dict[str, dict[str, float]] = {}
+    for name, (parquet, judges) in BENCHMARKS.items():
+        sh, g = _fit_benchmark(parquet, judges)
+        label = (f"{PRETTY.get(name, name)}\n"
+                 f"(m={g.n_m}, $n_j$={g.n_j}, $n_i$={g.n_i})")
+        shares[label] = sh
 
-    fig, ax = plt.subplots(figsize=(9, 3.2))
+    fig, ax = plt.subplots(figsize=(9, 0.9 + 1.2 * len(shares)))
     y_pos = list(range(len(shares)))
     left = [0.0] * len(shares)
     for c in COMPONENTS:
