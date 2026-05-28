@@ -26,11 +26,12 @@ TABLES_DIR = REPO_ROOT / "outputs" / "tables"
 FIGURES_DIR = REPO_ROOT / "outputs" / "figures"
 
 
-def _short(name: str, n: int = 18) -> str:
+def _short(name: str, n: int = 30) -> str:
     return name if len(name) <= n else name[: n - 1] + "…"
 
 
-def _plot_one(ax, rfp_csv: Path, benchmark: str, fixed_n_j: int = 1) -> None:
+def _plot_one(ax, rfp_csv: Path, benchmark: str,
+              fixed_n_j: int = 1, ytick_fontsize: float = 6.5) -> None:
     df = pd.read_csv(rfp_csv)
     df = df[df["n_j"] == fixed_n_j].copy()
     df["pair"] = df.apply(
@@ -52,9 +53,9 @@ def _plot_one(ax, rfp_csv: Path, benchmark: str, fixed_n_j: int = 1) -> None:
     ax.set_xticks(range(len(n_i_grid)))
     ax.set_xticklabels([str(n) for n in n_i_grid])
     ax.set_yticks(range(len(pair_order)))
-    ax.set_yticklabels(pair_order, fontsize=6.5)
+    ax.set_yticklabels(pair_order, fontsize=ytick_fontsize)
     ax.set_xlabel(f"$n_i$ (items per judge, $n_j={fixed_n_j}$)")
-    ax.set_title(f"{benchmark}: adjacent-pair RFP", fontsize=11)
+    ax.set_title(f"{benchmark}  ($n_j={fixed_n_j}$)", fontsize=11)
 
     # Cell annotations
     for r in range(mat.shape[0]):
@@ -70,23 +71,44 @@ def _plot_one(ax, rfp_csv: Path, benchmark: str, fixed_n_j: int = 1) -> None:
 
 def main() -> int:
     FIGURES_DIR.mkdir(parents=True, exist_ok=True)
-    # WildBench (40 pairs) dominates vertical space; allocate width
-    # proportional to the number of adjacent pairs to keep cells readable.
-    panels = [
-        ("WildBench", TABLES_DIR / "rfp_wildbench.csv", 40),
-        ("BiGGen-Bench", TABLES_DIR / "rfp_biggen_bench.csv", 3),  # m=4 → 3 pairs
-        ("Arena-Hard", TABLES_DIR / "rfp_arena_hard.csv", 7),
-    ]
-    widths = [max(1, n // 5) for _, _, n in panels]
-    fig, axes = plt.subplots(
-        1, len(panels), figsize=(14, 9),
-        gridspec_kw={"width_ratios": widths},
-    )
-    im = None
-    for ax, (name, path, _) in zip(axes, panels):
-        im = _plot_one(ax, path, name)
 
-    cbar = fig.colorbar(im, ax=axes, shrink=0.7, pad=0.02)
+    # Two-row layout:
+    #   Row 1 (full width): WildBench — 40 adjacent pairs need both
+    #     vertical room and horizontal room for two-line y-tick labels.
+    #   Row 2: BiGGen-Bench (3 pairs) and Arena-Hard (7 pairs) side by
+    #     side, with width roughly proportional to their pair counts so
+    #     each panel has enough room for its title and x-ticks.
+    fig = plt.figure(figsize=(13, 13))
+    gs = fig.add_gridspec(
+        2, 2,
+        height_ratios=[40, 8],
+        width_ratios=[3, 7],
+        hspace=0.20,
+        # Wide horizontal gap so Arena-Hard's long y-tick labels (e.g.
+        # "claude-3-opus-20240229 vs claude-3-sonnet-20240229") don't
+        # spill leftward into the BiGGen-Bench panel.
+        wspace=0.65,
+    )
+    ax_wb = fig.add_subplot(gs[0, :])
+    ax_bg = fig.add_subplot(gs[1, 0])
+    ax_ah = fig.add_subplot(gs[1, 1])
+
+    im_wb = _plot_one(
+        ax_wb, TABLES_DIR / "rfp_wildbench.csv", "WildBench",
+        ytick_fontsize=6.5,
+    )
+    _plot_one(
+        ax_bg, TABLES_DIR / "rfp_biggen_bench.csv", "BiGGen-Bench",
+        ytick_fontsize=8,
+    )
+    _plot_one(
+        ax_ah, TABLES_DIR / "rfp_arena_hard.csv", "Arena-Hard",
+        ytick_fontsize=8,
+    )
+
+    # Anchor the colorbar to the WildBench row so it has plenty of
+    # vertical space without straddling both rows awkwardly.
+    cbar = fig.colorbar(im_wb, ax=ax_wb, shrink=0.55, pad=0.02)
     cbar.set_label("Rank-flip probability (%)")
     cbar.set_ticks([0, 0.1, 0.2, 0.3, 0.4, 0.5])
     cbar.set_ticklabels(["0", "10", "20", "30", "40", "≥50"])
@@ -96,6 +118,7 @@ def main() -> int:
         "across achievable item counts",
         fontsize=12, y=0.995,
     )
+    fig.tight_layout(rect=[0, 0, 1, 0.97])
     for ext in ("png", "pdf"):
         out = FIGURES_DIR / f"rfp_heatmap.{ext}"
         plt.savefig(out, dpi=220 if ext == "png" else None, bbox_inches="tight")
