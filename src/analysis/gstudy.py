@@ -34,7 +34,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from src.utils.seeds import BOOTSTRAP_SEED
+from src.utils.seeds import BOOTSTRAP_SEED, CV_SEED
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PROCESSED_DIR = REPO_ROOT / "data" / "processed"
@@ -294,6 +294,188 @@ def summarize_bootstrap(boot: pd.DataFrame) -> pd.DataFrame:
 
 
 # -----------------------------------------------------------------------------
+# Goodness-of-fit: leave-items-out k-fold cross-validation
+# -----------------------------------------------------------------------------
+
+def cross_validate_items(
+    df: pd.DataFrame,
+    k: int = 5,
+    seed: int = CV_SEED,
+) -> pd.DataFrame:
+    """k-fold leave-items-out CV with the (m, j)-cell-mean predictor.
+
+    For each held-out cell (m, j, i*), the prediction is the train-set
+    (m, j) cell mean: \\hat y = (1/|I_train|) Σ X_{m,j,i} for i in I_train.
+
+    This is the optimal item-agnostic predictor under the random-effects
+    model — it's the BLUP for a fresh item when item-specific terms are
+    integrated out. It matches the D-study's generalization target
+    (fresh item draws), so leave-items-out is the appropriate CV setup
+    for a G-Theory analysis.
+
+    The closed-form expected aggregate R² is
+        (σ²_m + σ²_j + σ²_mj) / σ²_total,
+    i.e. the share of variance that survives item-averaging. The
+    measured aggregate R² should land within a few percentage points
+    of this ceiling; a large gap indicates either a model
+    mis-specification or finite-sample noise in the cell-mean
+    estimator.
+
+    Args:
+        df: balanced long-form panel (columns: model, judge, item_id,
+            score). Use balanced_panel() to produce.
+        k: number of folds (default 5).
+        seed: RNG seed for item shuffling (default CV_SEED).
+
+    Returns:
+        DataFrame with k + 1 rows. Per-fold rows have
+        ``fold=0..k-1``; the aggregate row has ``fold='ALL'`` and
+        reports R²/RMSE pooled across every test cell. Columns:
+        ``fold, n_test_cells, r2, rmse``.
+    """
+    items = sorted(df["item_id"].unique())
+    rng = np.random.default_rng(seed)
+    shuffled = rng.permutation(items)
+    folds = np.array_split(shuffled, k)
+
+    rows: list[dict] = []
+    all_y: list[np.ndarray] = []
+    all_yhat: list[np.ndarray] = []
+
+    for fold_idx, test_items in enumerate(folds):
+        test_set = set(test_items.tolist())
+        train_mask = ~df["item_id"].isin(test_set)
+        train_df = df[train_mask]
+        test_df = df[~train_mask]
+
+        # Train-set (m, j) cell mean — the BLUP for a fresh item.
+        train_mj = train_df.groupby(["model", "judge"])["score"].mean()
+        # Predict: per-row lookup into the train-set (m, j) table.
+        test_keys = list(zip(test_df["model"], test_df["judge"]))
+        train_global_mean = train_df["score"].mean()
+        yhat = np.array([
+            train_mj.get(key, train_global_mean) for key in test_keys
+        ])
+        y = test_df["score"].values
+
+        sse = float(np.sum((y - yhat) ** 2))
+        sst = float(np.sum((y - y.mean()) ** 2))
+        r2 = 1.0 - sse / sst if sst > 0 else float("nan")
+        rmse = float(np.sqrt(sse / len(y)))
+
+        rows.append({
+            "fold": fold_idx,
+            "n_test_cells": int(len(y)),
+            "r2": r2,
+            "rmse": rmse,
+        })
+        all_y.append(y)
+        all_yhat.append(yhat)
+
+    pooled_y = np.concatenate(all_y)
+    pooled_yhat = np.concatenate(all_yhat)
+    agg_sse = float(np.sum((pooled_y - pooled_yhat) ** 2))
+    agg_sst = float(np.sum((pooled_y - pooled_y.mean()) ** 2))
+    rows.append({
+        "fold": "ALL",
+        "n_test_cells": int(len(pooled_y)),
+        "r2": 1.0 - agg_sse / agg_sst if agg_sst > 0 else float("nan"),
+        "rmse": float(np.sqrt(agg_sse / len(pooled_y))),
+    })
+    return pd.DataFrame(rows)
+
+
+def cross_validate_items_rasch_baseline(
+    df: pd.DataFrame,
+    k: int = 5,
+    seed: int = CV_SEED,
+) -> pd.DataFrame:
+    """k-fold leave-items-out CV with a textbook 2-facet Rasch baseline.
+
+    Predicts each held-out cell (m, j, i*) using only the train-set
+    model main effect:
+
+        \\hat y = mu_train + alpha_m_train = mean over train of X_{m, ., .}
+
+    This is the textbook Rasch model (persons × items, no judge facet)
+    evaluated under held-out items, where the unknown item difficulty
+    delta_{i*} goes to its prior mean of zero. The judge facet is
+    discarded entirely — judges' main effects and the model×judge
+    interaction are *not* used in the prediction.
+
+    Used as a baseline to test whether the added complexity of the
+    full random-effects model (judges as a random facet, model×judge
+    interaction) has out-of-sample generalization value beyond a
+    simple Rasch decomposition. The expected aggregate R² ceiling is
+    σ²_m / σ²_total — the share of variance attributable to the
+    model main effect alone.
+
+    Shares the fold split with ``cross_validate_items`` when called
+    with the same seed, so per-fold and aggregate differences are
+    paired and directly comparable.
+
+    Args:
+        df: balanced long-form panel; same shape as cross_validate_items.
+        k: number of folds (default 5).
+        seed: RNG seed for item shuffling (default CV_SEED).
+
+    Returns:
+        DataFrame with k + 1 rows, columns
+        ``fold, n_test_cells, r2, rmse``. The aggregate row has
+        ``fold='ALL'``.
+    """
+    items = sorted(df["item_id"].unique())
+    rng = np.random.default_rng(seed)
+    shuffled = rng.permutation(items)
+    folds = np.array_split(shuffled, k)
+
+    rows: list[dict] = []
+    all_y: list[np.ndarray] = []
+    all_yhat: list[np.ndarray] = []
+
+    for fold_idx, test_items in enumerate(folds):
+        test_set = set(test_items.tolist())
+        train_mask = ~df["item_id"].isin(test_set)
+        train_df = df[train_mask]
+        test_df = df[~train_mask]
+
+        # Train-set model main effect: per-model mean across all (j, i)
+        # cells in the training items. The judge facet is discarded.
+        train_m = train_df.groupby("model")["score"].mean()
+        train_global_mean = train_df["score"].mean()
+        yhat = np.array([
+            train_m.get(m_, train_global_mean) for m_ in test_df["model"]
+        ])
+        y = test_df["score"].values
+
+        sse = float(np.sum((y - yhat) ** 2))
+        sst = float(np.sum((y - y.mean()) ** 2))
+        r2 = 1.0 - sse / sst if sst > 0 else float("nan")
+        rmse = float(np.sqrt(sse / len(y)))
+
+        rows.append({
+            "fold": fold_idx,
+            "n_test_cells": int(len(y)),
+            "r2": r2,
+            "rmse": rmse,
+        })
+        all_y.append(y)
+        all_yhat.append(yhat)
+
+    pooled_y = np.concatenate(all_y)
+    pooled_yhat = np.concatenate(all_yhat)
+    agg_sse = float(np.sum((pooled_y - pooled_yhat) ** 2))
+    agg_sst = float(np.sum((pooled_y - pooled_y.mean()) ** 2))
+    rows.append({
+        "fold": "ALL",
+        "n_test_cells": int(len(pooled_y)),
+        "r2": 1.0 - agg_sse / agg_sst if agg_sst > 0 else float("nan"),
+        "rmse": float(np.sqrt(agg_sse / len(pooled_y))),
+    })
+    return pd.DataFrame(rows)
+
+
+# -----------------------------------------------------------------------------
 # CLI: fit both benchmarks at their primary designs and write summary tables
 # -----------------------------------------------------------------------------
 
@@ -324,7 +506,7 @@ def _run_one(
     parquet: Path,
     judges: tuple[str, ...],
     n_boot: int,
-) -> tuple[GStudyFit, pd.DataFrame, pd.DataFrame]:
+) -> tuple[GStudyFit, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     df = pd.read_parquet(parquet)
     balanced = balanced_panel(df, judges=judges)
     n_m = balanced["model"].nunique()
@@ -335,7 +517,9 @@ def _run_one(
     point = fit(balanced)
     boot = bootstrap(balanced, n_reps=n_boot)
     summary = summarize_bootstrap(boot)
-    return point, boot, summary
+    cv = cross_validate_items(balanced, k=5)
+    cv_rasch = cross_validate_items_rasch_baseline(balanced, k=5)
+    return point, boot, summary, cv, cv_rasch
 
 
 def main() -> int:
@@ -344,8 +528,11 @@ def main() -> int:
 
     runs = [(name, *cfg) for name, cfg in BENCHMARKS.items()]
     all_rows = []
+    all_cv_rows: list[dict] = []
     for name, parquet, judges in runs:
-        point, boot, summary = _run_one(name, parquet, judges, n_boot=n_boot)
+        point, boot, summary, cv, cv_rasch = _run_one(
+            name, parquet, judges, n_boot=n_boot
+        )
         row = {"benchmark": name, **point.as_row()}
         all_rows.append(row)
         # Per-benchmark CI table.
@@ -360,8 +547,28 @@ def main() -> int:
                   f"share: {point.share()[k]:6.2%})")
         if point.negative_flags:
             print(f"    [warning] negative raw estimates: {point.negative_flags}")
+        # Goodness-of-fit: in-sample structural R² + leave-items-out CV
+        # for both the full predictor and the Rasch baseline.
+        in_sample_r2 = 1.0 - point.components_clipped["mji_e"] / point.total()
+        agg_full = cv[cv["fold"] == "ALL"].iloc[0]
+        agg_rasch = cv_rasch[cv_rasch["fold"] == "ALL"].iloc[0]
+        gap = agg_full["r2"] - agg_rasch["r2"]
+        print(f"[gstudy] {name} fit: in-sample R²_struct = {in_sample_r2:.4f}; "
+              f"CV R² full = {agg_full['r2']:.4f}, Rasch = {agg_rasch['r2']:.4f} "
+              f"(Δ = {gap:+.4f}; RMSE full = {agg_full['rmse']:.4f}, "
+              f"Rasch = {agg_rasch['rmse']:.4f}; "
+              f"n_test_cells = {int(agg_full['n_test_cells']):,})")
+        cv = cv.copy()
+        cv.insert(0, "benchmark", name)
+        cv.insert(1, "predictor", "full_random_effects")
+        all_cv_rows.extend(cv.to_dict("records"))
+        cv_rasch = cv_rasch.copy()
+        cv_rasch.insert(0, "benchmark", name)
+        cv_rasch.insert(1, "predictor", "rasch_baseline")
+        all_cv_rows.extend(cv_rasch.to_dict("records"))
 
     pd.DataFrame(all_rows).to_csv(TABLES_DIR / "gstudy_point_estimates.csv", index=False)
+    pd.DataFrame(all_cv_rows).to_csv(TABLES_DIR / "gof_cv.csv", index=False)
     print(f"[gstudy] wrote summary tables to {TABLES_DIR}")
     return 0
 

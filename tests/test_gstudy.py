@@ -16,6 +16,8 @@ from src.analysis.gstudy import (
     COMPONENTS,
     balanced_panel,
     bootstrap,
+    cross_validate_items,
+    cross_validate_items_rasch_baseline,
     fit,
     summarize_bootstrap,
 )
@@ -144,6 +146,68 @@ def test_balanced_panel_filters_to_intersection() -> None:
     # And all cells fully crossed
     counts = balanced.groupby(["judge", "model"]).size()
     assert (counts == 9).all()
+
+
+def test_cross_validate_items_schema_and_bounds() -> None:
+    """5-fold CV returns the expected schema and bounded metrics."""
+    df = _simulate(n_m=4, n_j=3, n_i=40,
+                   sigmas={k: 0.5 for k in COMPONENTS}, seed=3)
+    cv = cross_validate_items(df, k=5, seed=42)
+    # Schema: 5 fold rows + 1 ALL row.
+    assert set(cv.columns) == {"fold", "n_test_cells", "r2", "rmse"}
+    assert len(cv) == 6
+    # The fold labels should be 0..4 then "ALL".
+    assert list(cv["fold"])[:5] == [0, 1, 2, 3, 4]
+    assert cv.iloc[5]["fold"] == "ALL"
+    # Every R² should be ≤ 1 (can be negative if the predictor is worse than
+    # the fold's own mean; should not happen on this synthetic).
+    assert (cv["r2"] <= 1.0).all()
+    assert (cv["rmse"] >= 0).all()
+    # Aggregate test-cell count equals the panel size, since every cell is
+    # held out exactly once.
+    assert int(cv.iloc[5]["n_test_cells"]) == len(df)
+
+
+def test_rasch_baseline_schema_and_bounds() -> None:
+    """The Rasch baseline CV returns the same schema as the full predictor."""
+    df = _simulate(n_m=4, n_j=3, n_i=40,
+                   sigmas={k: 0.5 for k in COMPONENTS}, seed=5)
+    cv_rasch = cross_validate_items_rasch_baseline(df, k=5, seed=42)
+    assert set(cv_rasch.columns) == {"fold", "n_test_cells", "r2", "rmse"}
+    assert len(cv_rasch) == 6
+    assert list(cv_rasch["fold"])[:5] == [0, 1, 2, 3, 4]
+    assert cv_rasch.iloc[5]["fold"] == "ALL"
+    assert (cv_rasch["r2"] <= 1.0).all()
+    assert (cv_rasch["rmse"] >= 0).all()
+    assert int(cv_rasch.iloc[5]["n_test_cells"]) == len(df)
+
+
+def test_rasch_baseline_never_beats_full_predictor() -> None:
+    """The full predictor uses strictly more information than the Rasch
+    baseline (adds judge main + (m, j) interaction), so its aggregate
+    R² should not be lower. Allow a tiny tolerance for finite-sample
+    noise."""
+    sigmas = {"m": 1.0, "j": 0.6, "i": 0.5, "mj": 0.3,
+              "mi": 0.4, "ji": 0.2, "mji_e": 0.5}
+    df = _simulate(n_m=6, n_j=4, n_i=60, sigmas=sigmas, seed=6)
+    cv_full = cross_validate_items(df, k=5, seed=42)
+    cv_rasch = cross_validate_items_rasch_baseline(df, k=5, seed=42)
+    full_r2 = cv_full[cv_full["fold"] == "ALL"].iloc[0]["r2"]
+    rasch_r2 = cv_rasch[cv_rasch["fold"] == "ALL"].iloc[0]["r2"]
+    assert full_r2 + 1e-6 >= rasch_r2, (
+        f"full predictor R²={full_r2:.4f} < Rasch baseline R²={rasch_r2:.4f}"
+    )
+
+
+def test_cross_validate_items_no_item_effect_high_r2() -> None:
+    """If σ²_i = σ²_mi = σ²_ji = 0 and within-cell noise is small, the
+    (m, j) cell-mean predictor should achieve high CV R²."""
+    sigmas = {"m": 1.0, "j": 0.5, "i": 0.0, "mj": 0.2,
+              "mi": 0.0, "ji": 0.0, "mji_e": 0.01}
+    df = _simulate(n_m=4, n_j=3, n_i=80, sigmas=sigmas, seed=4)
+    cv = cross_validate_items(df, k=5, seed=42)
+    agg_r2 = cv[cv["fold"] == "ALL"].iloc[0]["r2"]
+    assert agg_r2 > 0.95, f"expected high R² with no item effect, got {agg_r2:.3f}"
 
 
 @pytest.mark.parametrize("benchmark,judges,parquet_name", [
